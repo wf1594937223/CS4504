@@ -71,6 +71,21 @@ python main.py --quick --epochs 2
 python main.py --epochs 3
 ```
 
+**额外附加**：
+
+```powershell
+python main.py --epochs 4
+```
+
+该命令会依次完成：
+
+1. 检查 `movie_features.pt`。如果文件不存在，会自动使用本地 `gpt2_model` 提取电影标题和类型的文本特征并保存。
+2. 使用 MovieLens 数据训练推荐模型 4 轮；训练过程中会显示 loss 和验证集 HR@10、NDCG@10。
+3. 输出最佳验证结果、测试集结果和一个用户的 Top-10 推荐。
+4. 自动运行冷启动演示，选出训练集中没有交互记录的 3 部电影，打印模型分数。此时新电影的 ID 向量置零，分数只使用文本特征和用户向量。
+
+第一次运行会生成 `movie_features.pt` 和 `checkpoint.pth`；后续运行会复用文本特征，并重新训练模型。
+
 ## 6. 运行结果检查
 
 完整流程应满足：
