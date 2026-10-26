@@ -9,6 +9,7 @@ import torch
 
 from dataloader import EvalDataLoader, TrainDataLoader
 from dataset import ML1MDataset
+from extend_cold_start import cold_start_recommendation
 from recommender import HybridRecommender
 from trainer import Trainer
 
@@ -22,12 +23,13 @@ def main(args):
     # 有 NVIDIA GPU 时自动使用 CUDA；没有 GPU 时仍可在 CPU 上运行。
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    # 1. 特征文件不存在时，先用包内 GPT-2 模型生成电影文本特征。
     if not Path(args.features).is_file():
-        raise FileNotFoundError(
-            f"找不到 {args.features}，请先运行 python gpt2.py"
-        )
+        from gpt2 import extract_movie_features
 
-    # 1. 读取 ML-1M，并取得固定的训练、验证、测试划分。
+        extract_movie_features(args.data_path, args.features)
+
+    # 2. 读取 ML-1M，并取得固定的训练、验证、测试划分。
     dataset = ML1MDataset(args.data_path)
     train_data = dataset.get_split_data("train")
     valid_data = dataset.get_split_data("validation")
@@ -46,10 +48,10 @@ def main(args):
         f"{len(train_data)}/{len(valid_data)}/{len(test_data)}"
     )
 
-    # 2. 载入 gpt2.py 预先生成的电影文本特征。
+    # 3. 载入电影文本特征。
     text_features = torch.load(args.features, map_location="cpu")
 
-    # 3. 构造混合推荐模型以及训练、验证、测试数据加载器。
+    # 4. 构造混合推荐模型以及训练、验证、测试数据加载器。
     model = HybridRecommender(
         dataset.get_user_num(),
         dataset.get_item_num(),
@@ -75,7 +77,7 @@ def main(args):
         device=device,
     )
 
-    # 4. 训练模型；训练结束后在测试集上进行一次最终评测。
+    # 5. 训练模型；训练结束后在测试集上进行一次最终评测。
     trainer = Trainer(
         model,
         train_loader,
@@ -89,7 +91,7 @@ def main(args):
     print("Best validation:", valid_result)
     print("Test:", test_result)
 
-    # 5. 展示一个用户的实际 Top-10 推荐结果。
+    # 6. 展示一个用户的实际 Top-10 推荐结果。
     user_id = int(train_data["user_id"].iloc[0])
     seen = set(
         train_data.loc[train_data["user_id"] == user_id, "movie_id"]
@@ -105,6 +107,9 @@ def main(args):
     for movie_id in recommended:
         title = dataset.items_df.loc[movie_id, "title"]
         print(f"  {movie_id}: {title}")
+
+    # 7. 对训练集中未出现过的新电影进行仅文本特征的冷启动演示。
+    cold_start_recommendation(model, dataset, train_data, device)
 
 
 if __name__ == "__main__":
