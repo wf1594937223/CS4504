@@ -5,7 +5,11 @@ import pandas as pd
 
 
 class ML1MDataset:
-    """读取 MovieLens-1M，并把评分记录划分为训练、验证和测试集。"""
+    """读取 MovieLens-1M，并划分常规数据集与固定冷启动电影集。"""
+
+    cold_start_seed = 2025
+    cold_start_ratio = 0.1
+    min_cold_start_ratings = 20
 
     def __init__(self, data_path, split_ratio=(0.8, 0.1, 0.1)):
         self.data_path = Path(data_path).resolve()
@@ -46,19 +50,41 @@ class ML1MDataset:
         )
 
     def _generate_splits(self, split_ratio):
-        """固定随机种子打乱评分记录，再按 8:1:1 划分。"""
+        """固定留出一组电影，其余评分记录按比例划分。"""
         if not np.isclose(sum(split_ratio), 1.0):
             raise ValueError("split_ratio 三项之和必须为 1")
 
         data = self.interactions_df.sample(frac=1, random_state=42).reset_index(drop=True)
-        total = len(data)
-        train_end = int(total * split_ratio[0])
-        valid_end = int(total * (split_ratio[0] + split_ratio[1]))
+        movie_rating_counts = data["movie_id"].value_counts()
+        eligible_movies = np.sort(
+            movie_rating_counts[
+                movie_rating_counts >= self.min_cold_start_ratings
+            ].index.to_numpy()
+        )
+        holdout_count = int(round(len(eligible_movies) * self.cold_start_ratio))
+        if len(eligible_movies) and holdout_count == 0:
+            holdout_count = 1
+        if holdout_count:
+            rng = np.random.RandomState(self.cold_start_seed)
+            selected_movies = rng.choice(
+                eligible_movies, size=holdout_count, replace=False
+            )
+            self.cold_start_movie_ids = tuple(
+                sorted(int(movie_id) for movie_id in selected_movies)
+            )
+        else:
+            self.cold_start_movie_ids = ()
 
-        # 0、1、2 分别代表训练集、验证集和测试集。
-        labels = np.full(total, 2, dtype=np.int8)
-        labels[:train_end] = 0
-        labels[train_end:valid_end] = 1
+        # 0、1、2、3 分别代表训练、验证、测试和独立冷启动测试。
+        labels = np.full(len(data), 3, dtype=np.int8)
+        warm_indices = np.flatnonzero(
+            ~data["movie_id"].isin(self.cold_start_movie_ids).to_numpy()
+        )
+        train_end = int(len(warm_indices) * split_ratio[0])
+        valid_end = int(len(warm_indices) * (split_ratio[0] + split_ratio[1]))
+        labels[warm_indices[:train_end]] = 0
+        labels[warm_indices[train_end:valid_end]] = 1
+        labels[warm_indices[valid_end:]] = 2
         data["split"] = labels
         self.interactions_df = data
 
@@ -67,9 +93,9 @@ class ML1MDataset:
         if split is None:
             return tuple(self.get_split_data(name) for name in ("train", "validation", "test"))
 
-        split_map = {"train": 0, "validation": 1, "test": 2}
+        split_map = {"train": 0, "validation": 1, "test": 2, "cold_start": 3}
         if split not in split_map:
-            raise ValueError("split 必须是 train、validation 或 test")
+            raise ValueError("split 必须是 train、validation、test 或 cold_start")
 
         result = self.interactions_df[
             self.interactions_df["split"] == split_map[split]
@@ -80,6 +106,10 @@ class ML1MDataset:
             )
             result = result[result["user_id"].isin(train_users)]
         return result
+
+    def get_cold_start_movie_ids(self):
+        """返回固定预留的冷启动电影 ID。"""
+        return self.cold_start_movie_ids
 
     def get_user_num(self):
         return self.user_num

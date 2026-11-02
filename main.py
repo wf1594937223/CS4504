@@ -1,4 +1,4 @@
-"""基础版 GPT-2 + NCF 推荐系统的统一运行入口。"""
+# """基础版 GPT-2 + NCF 推荐系统的统一运行入口。"""
 
 import argparse
 import random
@@ -34,6 +34,7 @@ def main(args):
     train_data = dataset.get_split_data("train")
     valid_data = dataset.get_split_data("validation")
     test_data = dataset.get_split_data("test")
+    cold_test_data = dataset.get_split_data("cold_start")
 
     # 快速模式只保留前 500 位训练用户，适合讲课时快速确认流程。
     if args.quick:
@@ -41,11 +42,19 @@ def main(args):
         train_data = train_data[train_data["user_id"].isin(selected_users)]
         valid_data = valid_data[valid_data["user_id"].isin(selected_users)]
         test_data = test_data[test_data["user_id"].isin(selected_users)]
+        cold_test_data = cold_test_data[
+            cold_test_data["user_id"].isin(selected_users)
+        ]
 
     print(f"Device: {device}")
     print(
         "Train/validation/test: "
         f"{len(train_data)}/{len(valid_data)}/{len(test_data)}"
+    )
+    print(
+        "Cold-start holdout: "
+        f"{len(dataset.get_cold_start_movie_ids())} movies, "
+        f"{len(cold_test_data)} user interactions"
     )
 
     # 3. 载入电影文本特征。
@@ -58,6 +67,10 @@ def main(args):
         text_features,
         embed_dim=args.embed_dim,
     )
+    cold_movie_ids = list(dataset.get_cold_start_movie_ids())
+    if cold_movie_ids:
+        model.valid_item_mask[cold_movie_ids] = False
+
     train_loader = TrainDataLoader(
         train_data,
         batch_size=args.batch_size,
@@ -109,7 +122,7 @@ def main(args):
         print(f"  {movie_id}: {title}")
 
     # 7. 对训练集中未出现过的新电影进行仅文本特征的冷启动演示。
-    cold_start_recommendation(model, dataset, train_data, device)
+    cold_start_recommendation(model, dataset, train_data, cold_test_data, device)
 
 
 if __name__ == "__main__":
